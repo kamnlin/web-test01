@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>倒數計時器</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;min-height:100svh;display:grid;place-items:center;padding:20px;background:#e8e9de;color:#243a30;font-family:system-ui,sans-serif}
+main{width:min(100%,470px);background:#faf9f1;border:1px solid #d6dbcb;border-radius:30px;padding:clamp(20px,6vw,40px);box-shadow:0 20px 65px #233a3022}
+h1{margin:0 0 22px;font-size:1.25rem}
+.display{text-align:center;background:#20382f;color:#f5f8e9;border-radius:18px;padding:27px 15px 20px}
+#time{font-size:clamp(2.1rem,11vw,4.8rem);font-weight:700;font-variant-numeric:tabular-nums;letter-spacing:-.055em;line-height:1.1}
+#status{margin:12px 0;color:#d3e4c8;min-height:1.5em}
+progress{appearance:none;width:100%;height:5px;display:block;border:0;border-radius:8px;overflow:hidden;background:#496158;color:#c8e59c}
+progress::-webkit-progress-bar{background:#496158}
+progress::-webkit-progress-value{background:#c8e59c}
+progress::-moz-progress-bar{background:#c8e59c}
+form{margin-top:22px}
+.row{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-bottom:12px}
+label{font-size:.86rem;font-weight:600}
+input,button{font:inherit;border:1px solid #ced6c7;border-radius:10px;color:inherit;background:#fffef8;min-height:44px}
+input[type=number]{display:block;width:100%;margin-top:5px;padding:8px;text-align:center}
+button{cursor:pointer;font-weight:650;padding:6px}
+button:hover:not(:disabled){background:#e6eddb}
+button:disabled,input:disabled{opacity:.55;cursor:default}
+button:focus-visible,input:focus-visible{outline:3px solid #577e46;outline-offset:2px}
+#toggle{background:#cce5ad;border-color:#cce5ad;grid-column:span 2}
+.sound{display:inline-flex;align-items:center;gap:7px;cursor:pointer}
+input[type=checkbox]{min-height:0;accent-color:#355943}
+</style>
+</head>
+<body>
+<main>
+<h1>倒數計時器</h1>
+<section class="display" aria-label="倒數顯示">
+<div id="time" role="timer">00:05:00</div>
+<p id="status" role="status">準備開始</p>
+<progress id="progress" value="1" max="1" aria-label="剩餘時間比例"></progress>
+</section>
+<form>
+<div class="row">
+<label>小時<input id="hours" type="number" min="0" max="99" step="1" value="0" required></label>
+<label>分鐘<input id="minutes" type="number" min="0" max="59" step="1" value="5" required></label>
+<label>秒鐘<input id="seconds" type="number" min="0" max="59" step="1" value="0" required></label>
+</div>
+<div class="row" aria-label="快速設定">
+<button type="button" data-minutes="1">1 分鐘</button>
+<button type="button" data-minutes="5">5 分鐘</button>
+<button type="button" data-minutes="10">10 分鐘</button>
+</div>
+<div class="row">
+<button id="toggle" type="submit">開始</button>
+<button id="reset" type="button">重設</button>
+</div>
+<label class="sound"><input id="sound" type="checkbox" checked>到點播放提示音</label>
+</form>
+</main>
+<script>
+const get = id => document.getElementById(id);
+const fields = ['hours', 'minutes', 'seconds'].map(get);
+const presets = [...document.querySelectorAll('[data-minutes]')];
+const toggle = get('toggle');
+const status = get('status');
+const sound = get('sound');
+let state = 'ready';
+let total = 300000;
+let remaining = total;
+let deadline = 0;
+let interval;
+let audio;
+
+function render() {
+  const seconds = Math.ceil(remaining / 1000);
+  const parts = [Math.floor(seconds / 3600), Math.floor(seconds / 60) % 60, seconds % 60];
+  get('time').textContent = parts.map(part => String(part).padStart(2, '0')).join(':');
+  get('progress').value = total ? remaining / total : 0;
+}
+
+function setState(next, message) {
+  state = next;
+  const locked = next === 'running' || next === 'paused';
+  fields.forEach(field => { field.disabled = locked; });
+  presets.forEach(button => { button.disabled = locked; });
+  toggle.textContent = {ready: '開始', running: '暫停', paused: '繼續', done: '再計時'}[next];
+  status.textContent = message;
+}
+
+function reset() {
+  clearInterval(interval);
+  total = fields.every(field => field.validity.valid)
+    ? fields.reduce((value, field) => value * 60 + field.valueAsNumber, 0) * 1000
+    : 0;
+  remaining = total;
+  setState('ready', '準備開始');
+  render();
+}
+
+function prepareAudio() {
+  const Audio = window.AudioContext || window.webkitAudioContext;
+  if (!Audio) return;
+  try {
+    audio ??= new Audio();
+    audio.resume().catch(() => {});
+  } catch {}
+}
+
+function chime() {
+  if (!sound.checked || audio?.state !== 'running') return;
+  [660, 880, 1047].forEach((frequency, index) => {
+    const start = audio.currentTime + index * .2;
+    const note = audio.createOscillator();
+    const gain = audio.createGain();
+    note.frequency.value = frequency;
+    gain.gain.setValueAtTime(.12, start);
+    gain.gain.exponentialRampToValueAtTime(.001, start + .18);
+    note.connect(gain).connect(audio.destination);
+    note.start(start);
+    note.stop(start + .19);
+  });
+}
+
+function tick() {
+  remaining = Math.max(0, deadline - Date.now());
+  render();
+  if (remaining === 0) {
+    clearInterval(interval);
+    setState('done', '時間到！');
+    chime();
+  }
+}
+
+document.querySelector('form').addEventListener('submit', event => {
+  event.preventDefault();
+  if (state === 'running') {
+    tick();
+    if (state === 'done') return;
+    clearInterval(interval);
+    setState('paused', '已暫停');
+    return;
+  }
+  if (state !== 'paused') reset();
+  if (!remaining) {
+    status.textContent = '請設定至少 1 秒';
+    return;
+  }
+  if (sound.checked) prepareAudio();
+  deadline = Date.now() + remaining;
+  setState('running', '倒數中');
+  interval = setInterval(tick, 100);
+  tick();
+});
+
+fields.forEach(field => field.addEventListener('input', reset));
+get('reset').addEventListener('click', reset);
+presets.forEach(button => button.addEventListener('click', () => {
+  [fields[0].value, fields[1].value, fields[2].value] = [0, button.dataset.minutes, 0];
+  reset();
+}));
+sound.addEventListener('change', () => { if (sound.checked) prepareAudio(); });
+document.addEventListener('visibilitychange', () => { if (state === 'running') tick(); });
+reset();
+</script>
+</body>
+</html>
